@@ -1,0 +1,209 @@
+---
+title: "Final Project"
+output: pdf_document
+---
+```{r}
+library(tidyverse)
+library(readr)
+library(readxl)
+library(GGally)
+library(mgcv)
+library(ggplot2)
+library(glmnet)
+library(caret)
+```
+
+need to take out id
+```{r}
+data <- readxl::read_excel("body_density_data.xlsx")
+```
+
+
++ descriptive stats
+
+
+```{r, message = FALSE}
+ggpairs(data)
+```
+Outcome: body_density (easy to interpret)
+
+neck, ankle, abdomen, weight might need transformation
+--> natural log/ box-cox 
+
+neck
+```{r}
+hist(data$neck)
+```
+It's just an outlier 
+
+ankle
+```{r}
+hist(data$ankle)
+```
+
+```{r}
+hist(data$abdomen)
+```
+
+weight
+```{r}
+hist(data$weight)
+```
+All outliers above are denoting a specific group of participants.
+
+Participant #39 is an outlier. This participant has outlying measurement for weight and abdomen. Since he/she also has a larger chest circumference, the data point is less likely to be a measurement error. It could has useful info.
+
+--> no transformation for all X's 
+
+split test and train
+
+```{r}
+# 80% 20% split
+data <- data %>%
+  select (-bodyfat_brozek, -bodyfat_siri, -id)
+set.seed(1)
+train_ind <- sample(seq_len(nrow(data)), size = nrow(data) * 0.8)
+train_df <- data[train_ind, ]
+test_df <- data[-train_ind, ]
+```
+
+
+variable selection --> a set of X's. maybe 3 sets
+backward/ forward/ stepwise
+
+# backward 
+```{r}
+mult.fit <- lm(body_density ~ ., data = train_df)
+step(mult.fit, direction='backward')
+```
+
+# forward 
+```{r}
+intercept_only_fit <- lm(body_density ~ 1, data=train_df)
+step(intercept_only_fit, direction = 'forward', scope = formula(mult.fit))
+```
+```{r}
+step(intercept_only_fit, direction = 'both', scope = formula(mult.fit))
+```
+These 3 methods return the same subset of X variables: abdomen, weight, thigh, wrist,forearm,age,neck,hip
+
+
+```{r}
+final <- lm(formula = body_density ~ abdomen + weight + thigh + wrist + 
+    forearm + age + neck + hip, data = train_df) 
+
+summary(final)
+```
+
+lasso 
+```{r}
+lamba_seq <- 10^seq(-3, 0,by = .1)
+train_predictors <- train_df %>% select(-body_density)
+cv_object <- cv.glmnet(as.matrix(train_predictors), train_df$body_density,
+                    lambda = lamba_seq, nfolds = 10)
+```
+
+```{r}
+tibble(lambda  = cv_object$lambda,
+       mean_cv_error = cv_object$cvm) %>%
+  ggplot(aes(x = lambda, y = mean_cv_error)) +
+  geom_point()
+```
+```{r}
+cv_object$lambda.min
+```
+```{r}
+lasso_fit <- glmnet(as.matrix(train_predictors),
+                    train_df$body_density,
+                    lambda = cv_object$lambda.min)
+coef(lasso_fit)
+```
+
+
+```{r}
+small_model <-lm(formula = body_density ~ abdomen  +age thigh + wrist + 
+    forearm + neck, data = train_df)
+
+anova(small_model, final)
+```
+
+Diagnostic
+```{r}
+par(mfrow = c(2,2))
+plot(final)
+```
+```{r}
+lasso_lm <- lm(body_density  ~ age + height + abdomen + wrist, data = train_df)
+par(mfrow = c(2,2))
+plot(lasso_lm)
+```
+
+```{r}
+summary(lasso_lm)
+```
+
+```{r}
+small_model <-lm(formula = body_density ~ abdomen  + thigh + wrist + 
+    forearm + neck, data = train_df)
+
+anova(small_model, final)
+```
+
+
+```{r}
+boxplot(train_df$age)
+```
+--> need to decide the final set of X
+
+prediction: lasso? ridge? meh
+
+
+compare models:
+cross validation? 
+
+automatic procedures
+```{r}
+train <- trainControl(method = "cv", number = 10)
+auto_model_caret <- train(
+  body_density ~ abdomen + weight + thigh + wrist + 
+    forearm + age + neck + hip, 
+  data = data,
+  trControl = train,
+  method = 'lm',
+  na.action = na.pass)
+print(auto_model_caret)
+
+```
+
+
+```{r}
+lasso_model_caret <- train(
+  body_density  ~ age + height + abdomen + wrist, 
+  data = data,
+  trControl = train,
+  method = 'lm',
+  na.action = na.pass)
+print(lasso_model_caret)
+```
+
+
+```{r}
+test_df %>% 
+  add_predictions(final) %>%
+  add_residuals(final) %>%
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5)
+```
+```{r}
+test_df %>% 
+  add_predictions(lasso_lm) %>%
+  add_residuals(lasso_lm) %>%
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5)
+```
+
+final model: big model
+
+
+
+ 
