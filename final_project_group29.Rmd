@@ -31,6 +31,8 @@ summary(data)
 ```{r, message = FALSE}
 ggpairs(data)
 ```
+
+
 Outcome: body_density (easy to interpret)
 
 neck, ankle, abdomen, weight might need transformation
