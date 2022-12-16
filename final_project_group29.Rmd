@@ -1,5 +1,5 @@
 ---
-title: "Final Project"
+title: "P8130 Final Project Code"
 output: pdf_document
 ---
 ```{r, message=FALSE}
@@ -13,6 +13,7 @@ library(glmnet)
 library(caret)
 library(modelr)
 library(mgcv)
+library(broom)
 ```
 
 ## Load Data
@@ -32,57 +33,56 @@ summary(data)
 ggpairs(data)
 ```
 
+neck, ankle, abdomen, weight might need transformation. But we will come back to it aftere model diagnostic 
 
-Outcome: body_density (easy to interpret)
-
-neck, ankle, abdomen, weight might need transformation
---> natural log/ box-cox 
-
-neck
+### neck
 ```{r}
 hist(data$neck)
 ```
+
 It's just an outlier 
 
-ankle
+### ankle
 ```{r}
 hist(data$ankle)
 ```
 
+### abdomen
 ```{r}
 hist(data$abdomen)
 ```
 
-weight
+### weight
 ```{r}
 hist(data$weight)
 ```
+
 All outliers above are denoting a specific group of participants.
 
 Participant #39 is an outlier. This participant has outlying measurement for weight and abdomen. Since he/she also has a larger chest circumference, the data point is less likely to be a measurement error. It could has useful info.
 
---> no transformation for all X's 
+No transformation for all for nows 
 
 
 
 ## Variable Selection 
-### Backward 
+### Backward selection
 ```{r}
 mult.fit <- lm(body_density ~ ., data = data)
 step(mult.fit, direction='backward')
 ```
 
-### forward 
+### Forward selection
 ```{r}
 intercept_only_fit <- lm(body_density ~ 1, data=data)
 step(intercept_only_fit, direction = 'forward', scope = formula(mult.fit))
 ```
-### Both
+### Stepwise regression
 ```{r}
 step(intercept_only_fit, direction = 'both', scope = formula(mult.fit), data = data)
 ```
 
-### lasso 
+### Lasso 
 ```{r}
 set.seed(200)
 lamba_seq <- 10^seq(-3, 0,by = .1)
@@ -147,34 +147,48 @@ cv_df %>%
 rmse <- cv_df %>% 
   select(starts_with("rmse"))
 
-sapply(rmse, mean, na.rm = T)
+sapply(rmse, mean, na.rm = T) %>%
+  knitr::kable(digits = 6, col.names = "mean",
+               caption = "Cross Validation Mean RMSE.")
 ```
 
 
-adj r^2
+## Compare adjusted R^2
+
+### Backward selection model
 ```{r}
 lm(body_density ~ age + weight + neck + abdomen + hip + thigh + bicep + forearm + wrist, data = data)  %>% summary()
 ```
+### Forward selection, stepwise regression model
 ```{r}
 lm(body_density ~ abdomen + weight + wrist + forearm + bicep + neck, data = data) %>% summary()
 ```
-
+### Lasso
 ```{r}
 lm(body_density ~ age + height + abdomen + wrist, data = data) %>% summary()
 ```
 
 final model: both + forward
 
+
+## Final model
 ```{r}
 final <- lm(body_density ~ abdomen + weight + wrist + forearm + bicep + neck, data = data)
+```
+
+```{r}
+final %>% 
+  summary() %>% 
+  tidy() %>% 
+  knitr::kable(digits = 4,
+               caption = "Linear Model Result")
+
+```
+```{r}
 par(mfrow = c(2,2))
 plot(final)
 ```
 
-```{r}
-library(car)
-vif(final)
-```
 ```{r}
 mean((data$body_density - predict.lm(final, data)) ^ 2)
 ```
