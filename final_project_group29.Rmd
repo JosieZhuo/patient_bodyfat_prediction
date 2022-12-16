@@ -17,7 +17,7 @@ library(mgcv)
 
 ## Load Data
 ```{r}
-data <- readxl::read_excel("body_density_data.xlsx")%>%
+data <- readxl::read_excel("body_density_data.xlsx") %>%
   select (-bodyfat_brozek, -bodyfat_siri, -id)
 ```
 
@@ -84,6 +84,7 @@ step(intercept_only_fit, direction = 'both', scope = formula(mult.fit), data = d
 
 ### lasso 
 ```{r}
+set.seed(200)
 lamba_seq <- 10^seq(-3, 0,by = .1)
 train_predictors <- data %>% select(-body_density)
 cv_object <- cv.glmnet(as.matrix(train_predictors), data$body_density,
@@ -135,7 +136,12 @@ cv_df %>%
     values_to = "rmse",
     names_prefix = "rmse_") %>% 
   mutate(model = fct_inorder(model)) %>% 
-  ggplot(aes(x = model, y = rmse)) + geom_violin(draw_quantiles = c(0.25, 0.5, 0.75))
+  ggplot(aes(x = model, y = rmse)) + geom_violin(draw_quantiles = c(0.25, 0.5, 0.75)) +
+  ggtitle("Model Performance in Cross Validation", 
+          subtitle = "backward selection variabls: age, weight, neck, abdomen, hip, thigh, bicep, forearm, wrist \nforward selection, setpwise regression variables: abdomen, weight, wrist, forearm,  bicep, neck \nlasso regression variables: age, height, abdomen, wrist") +
+  ylab("Root Mean Squared Eroor") +
+  xlab("Model") +
+  theme(plot.subtitle=element_text(size=9, color = "darkgray"))
 ```
 ```{r}
 rmse <- cv_df %>% 
