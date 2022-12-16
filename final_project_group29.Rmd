@@ -2,7 +2,7 @@
 title: "Final Project"
 output: pdf_document
 ---
-```{r}
+```{r, message=FALSE}
 library(tidyverse)
 library(readr)
 library(readxl)
@@ -11,16 +11,22 @@ library(mgcv)
 library(ggplot2)
 library(glmnet)
 library(caret)
+library(modelr)
+library(mgcv)
 ```
 
-need to take out id
+## Load Data
 ```{r}
-data <- readxl::read_excel("body_density_data.xlsx")
+data <- readxl::read_excel("body_density_data.xlsx")%>%
+  select (-bodyfat_brozek, -bodyfat_siri, -id)
 ```
 
 
-+ descriptive stats
+## Descriptive Statistics
 
+```{r}
+summary(data)
+```
 
 ```{r, message = FALSE}
 ggpairs(data)
@@ -55,51 +61,30 @@ Participant #39 is an outlier. This participant has outlying measurement for wei
 
 --> no transformation for all X's 
 
-split test and train
 
+
+## Variable Selection 
+### Backward 
 ```{r}
-# 80% 20% split
-data <- data %>%
-  select (-bodyfat_brozek, -bodyfat_siri, -id)
-set.seed(1)
-train_ind <- sample(seq_len(nrow(data)), size = nrow(data) * 0.8)
-train_df <- data[train_ind, ]
-test_df <- data[-train_ind, ]
-```
-
-
-variable selection --> a set of X's. maybe 3 sets
-backward/ forward/ stepwise
-
-# backward 
-```{r}
-mult.fit <- lm(body_density ~ ., data = train_df)
+mult.fit <- lm(body_density ~ ., data = data)
 step(mult.fit, direction='backward')
 ```
 
-# forward 
+### forward 
 ```{r}
-intercept_only_fit <- lm(body_density ~ 1, data=train_df)
+intercept_only_fit <- lm(body_density ~ 1, data=data)
 step(intercept_only_fit, direction = 'forward', scope = formula(mult.fit))
 ```
+### Both
 ```{r}
-step(intercept_only_fit, direction = 'both', scope = formula(mult.fit))
-```
-These 3 methods return the same subset of X variables: abdomen, weight, thigh, wrist,forearm,age,neck,hip
-
-
-```{r}
-final <- lm(formula = body_density ~ abdomen + weight + thigh + wrist + 
-    forearm + age + neck + hip, data = train_df) 
-
-summary(final)
+step(intercept_only_fit, direction = 'both', scope = formula(mult.fit), data = data)
 ```
 
-lasso 
+### lasso 
 ```{r}
 lamba_seq <- 10^seq(-3, 0,by = .1)
-train_predictors <- train_df %>% select(-body_density)
-cv_object <- cv.glmnet(as.matrix(train_predictors), train_df$body_density,
+train_predictors <- data %>% select(-body_density)
+cv_object <- cv.glmnet(as.matrix(train_predictors), data$body_density,
                     lambda = lamba_seq, nfolds = 10)
 ```
 
@@ -114,96 +99,74 @@ cv_object$lambda.min
 ```
 ```{r}
 lasso_fit <- glmnet(as.matrix(train_predictors),
-                    train_df$body_density,
+                    data$body_density,
                     lambda = cv_object$lambda.min)
 coef(lasso_fit)
 ```
 
-
+## Cross Validation
 ```{r}
-small_model <-lm(formula = body_density ~ abdomen  +age thigh + wrist + 
-    forearm + neck, data = train_df)
+cv_df =
+  crossv_mc(data, 5) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
 
-anova(small_model, final)
+cv_df = 
+  cv_df %>% 
+  mutate(
+    backward_mod  = map(train, ~lm(body_density ~ age + weight + neck + abdomen + hip + thigh + bicep + forearm + wrist, data = .x)),
+    both_forward_mod  = map(train, ~lm(body_density ~ abdomen + weight + wrist + forearm + bicep + neck, data = .x)),
+    lasso_mod  = map(train, ~lm(body_density ~ age + height + abdomen + wrist, data = as_tibble(.x)))) %>% 
+  mutate(
+    rmse_backward = map2_dbl(backward_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_both_forward  = map2_dbl(both_forward_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_lasso = map2_dbl(lasso_mod, test, ~rmse(model = .x, data = .y)))
 ```
 
-Diagnostic
 ```{r}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin(draw_quantiles = c(0.25, 0.5, 0.75))
+```
+```{r}
+rmse <- cv_df %>% 
+  select(starts_with("rmse"))
+
+sapply(rmse, mean, na.rm = T)
+```
+
+
+adj r^2
+```{r}
+lm(body_density ~ age + weight + neck + abdomen + hip + thigh + bicep + forearm + wrist, data = data)  %>% summary()
+```
+```{r}
+lm(body_density ~ abdomen + weight + wrist + forearm + bicep + neck, data = data) %>% summary()
+```
+
+```{r}
+lm(body_density ~ age + height + abdomen + wrist, data = data) %>% summary()
+```
+
+final model: both + forward
+
+```{r}
+final <- lm(body_density ~ abdomen + weight + wrist + forearm + bicep + neck, data = data)
 par(mfrow = c(2,2))
 plot(final)
 ```
-```{r}
-lasso_lm <- lm(body_density  ~ age + height + abdomen + wrist, data = train_df)
-par(mfrow = c(2,2))
-plot(lasso_lm)
-```
 
 ```{r}
-summary(lasso_lm)
-```
-
-```{r}
-small_model <-lm(formula = body_density ~ abdomen  + thigh + wrist + 
-    forearm + neck, data = train_df)
-
-anova(small_model, final)
-```
-
-
-```{r}
-boxplot(train_df$age)
-```
---> need to decide the final set of X
-
-prediction: lasso? ridge? meh
-
-
-compare models:
-cross validation? 
-
-automatic procedures
-```{r}
-train <- trainControl(method = "cv", number = 10)
-auto_model_caret <- train(
-  body_density ~ abdomen + weight + thigh + wrist + 
-    forearm + age + neck + hip, 
-  data = data,
-  trControl = train,
-  method = 'lm',
-  na.action = na.pass)
-print(auto_model_caret)
-
-```
-
-
-```{r}
-lasso_model_caret <- train(
-  body_density  ~ age + height + abdomen + wrist, 
-  data = data,
-  trControl = train,
-  method = 'lm',
-  na.action = na.pass)
-print(lasso_model_caret)
-```
-
-
-```{r}
-test_df %>% 
-  add_predictions(final) %>%
-  add_residuals(final) %>%
-  ggplot(aes(x = pred, y = resid)) +
-  geom_point(alpha = 0.5)
+library(car)
+vif(final)
 ```
 ```{r}
-test_df %>% 
-  add_predictions(lasso_lm) %>%
-  add_residuals(lasso_lm) %>%
-  ggplot(aes(x = pred, y = resid)) +
-  geom_point(alpha = 0.5)
+mean((data$body_density - predict.lm(final, data)) ^ 2)
 ```
-
-final model: big model
-
-
-
- 
